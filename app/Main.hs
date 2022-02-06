@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Main where
 
+import Control.Monad
 import Data.Void
 import Data.Char
 import Text.Megaparsec
@@ -49,16 +50,22 @@ titleParser = do
   _ <- eol
   return (Title depth text)
 
+normalTextChar :: Parser Char
+normalTextChar = satisfy $ \a -> case a of
+  ' ' -> True
+  _ -> False
 
 normalText :: Parser El
 normalText = do
-  text <- takeWhile1P  (Just "normal text") (getPredicate' (Predicate' isLetter <> isHSpace))
+  text <- some (alphaNumChar <|> separatorChar <|> (char '.'))
   return (Raw text)
 
+blockEl :: Parser El
+blockEl = normalText
 
 blockParser :: Parser TopLevel
 blockParser = do
-  elements <-  many (normalText <* skipMany space)
+  elements <-  some (blockEl <* (eof <|> void (char '\n')))
   return (Block elements)
 
 topLevel :: Parser Markdown
