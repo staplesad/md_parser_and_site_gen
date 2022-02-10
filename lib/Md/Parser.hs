@@ -11,7 +11,6 @@ import Text.Megaparsec
 import Text.Megaparsec.Char
 import Text.Megaparsec.Error
 import Text.Pretty.Simple
-import System.Directory (listDirectory)
 
 type Parser = Parsec Void String
 
@@ -24,16 +23,6 @@ data TopLevel = Title Int [El] | Block [El] | Hr | Empty | Blockquote [TopLevel]
 
 type Markdown = [TopLevel]
 
-
-
-path :: FilePath
-path = "palimpsest/"
-
-filesToParse :: IO [FilePath]
-filesToParse = listDirectory path
-
-file :: IO FilePath
-file = fmap head filesToParse
 
 data Predicate' a = Predicate' {getPredicate' :: a -> Bool}
 instance Semigroup (Predicate' a) where
