@@ -29,5 +29,5 @@ tests = testGroup "El Parsers"
   , testCase "Without Gaps" $ testParser withoutGapsText "this has to end without a space" (Raw "this has to end without a space")
   , testCase "Without Gaps failure" $ testFail withoutGapsText "this has to end without a space "
   , testCase "Indented Codeblock" $ testParser indentedCodeBlock "\n  \n    codeblock starts\n     continues^123~\n" (Codeblock "codeblock starts\n continues^123~\n")
-  , testCase "Fenced Codeblock" $ testParser fencedCodeBlock "```\n codeblock starts\n  continues^123~\n````" (Codeblock "codeblock starts\n continues^123~\n")
+  , testCase "Fenced Codeblock" $ testParser fencedCodeBlock " ````\n codeblock starts\n  continues^123~\n````\n" (Codeblock "codeblock starts\n continues^123~\n")
   ]
