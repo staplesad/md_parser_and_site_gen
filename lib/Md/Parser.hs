@@ -102,7 +102,7 @@ indentedCodeBlock = label "indented" $ try $ do
   eol *> many separatorChar *> eol
   text <- fmap unlines $ some $ do
     count 4 separatorChar
-    line <- some (letterChar <|> separatorChar <|> punctuationChar <|> symbolChar)
+    line <- some (alphaNumChar <|> separatorChar <|> punctuationChar <|> symbolChar)
     eol
     pure line
   return (Codeblock text)
