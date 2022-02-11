@@ -1,5 +1,7 @@
 module Main where
 
+import Data.Either
+
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -9,6 +11,9 @@ import Md.Parser
 
 testParser :: (Eq a, Show a) => Parser a -> String -> a -> Assertion
 testParser parser input expected = runParser parser "" input @?= Right expected
+
+testFail :: Parser a -> String -> Assertion
+testFail parser input = isLeft (runParser parser "" input) @?= True
 
 main :: IO ()
 main = defaultMain tests
@@ -20,5 +25,9 @@ tests = testGroup "El Parsers"
   , testCase "Emph Text" $ testParser emphText "_A emph piece of text_" (Emphasis [Raw "A emph piece of text"])
   , testCase "Nested emph" $ testParser emphText "_A emph __and strong__ piece of text_" (Emphasis [Raw "A emph ", Strong [Raw "and strong"], Raw " piece of text"])
   , testCase "Nested strong" $ testParser strongText "___strong and emph___" (Strong [Emphasis [ Raw "strong and emph"]])
-  , testCase "Strict Text" $ testParser strictText "This is a 1. piece of normal ` text ~!" (Raw "This is a 1. piece of normal ` text ~!")
+  , testCase "Strict Text" $ testParser strictText "This is a 1. piece of normal ` text ~!" (Raw "This is a ")
+  , testCase "Without Gaps" $ testParser withoutGapsText "this has to end without a space" (Raw "this has to end without a space")
+  , testCase "Without Gaps failure" $ testFail withoutGapsText "this has to end without a space "
+  , testCase "Indented Codeblock" $ testParser indentedCodeBlock "\n  \n    codeblock starts\n     continues^123~\n" (Codeblock "codeblock starts\n continues^123~\n")
+  , testCase "Fenced Codeblock" $ testParser fencedCodeBlock "```\n codeblock starts\n  continues^123~\n````" (Codeblock "codeblock starts\n continues^123~\n")
   ]
