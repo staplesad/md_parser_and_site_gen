@@ -14,35 +14,26 @@ import Text.Pretty.Simple
 
 type Parser = Parsec Void String
 
-data El =  Br | Link El String | Image El String | Emphasis [El] | Strong [El] | Strikethrough [El]
-        | Codespan String | Codeblock String | Raw String
+data El =  Br | Link El String | Image El String | Emphasis [El] | Strong [El]
+        | Strikethrough [El] | Codespan String | Codeblock String | Raw String
   deriving (Show, Eq)
 
-data TopLevel = Title Int [El] | Block [El] | Hr | Empty | Blockquote [TopLevel] | UList [[El]]| OList [[El]]
+data TopLevel = Title Int [El] | Block [El] | Hr | Empty | Blockquote [TopLevel]
+              | UList [[TopLevel]]| OList [[TopLevel]]
   deriving (Show, Eq)
 
 type Markdown = [TopLevel]
 
 
-data Predicate' a = Predicate' {getPredicate' :: a -> Bool}
-instance Semigroup (Predicate' a) where
-  f <> g = Predicate' $ \a -> getPredicate' f a || getPredicate' g a
-instance Monoid (Predicate' a) where
-  mempty = Predicate' $ const True
-
-
-isHSpace :: Predicate' Char
-isHSpace = Predicate' $ \x -> isSpace x && x /= '\n' && x /= '\r'
-
 titleParser :: Parser TopLevel
 titleParser = label "Title" $ try $ do
   count' 0 3 separatorChar
-  octothorpes <- some (char '#')
+  octothorpes <- count' 1 6 (char '#')
   let depth = length octothorpes
-  _ <- hspace
-  text <- some (subsetBlockEl)
-  _ <- many (char '#' <|> separatorChar)
-  _ <- eol
+  hspace
+  text <- some subsetBlockEl
+  many (char '#' <|> separatorChar)
+  eol
   return (Title depth text)
 
 myPuncChar :: Parser Char
@@ -124,7 +115,7 @@ fencedCodeBlock = label "fenced" $ try $ do
   _ <- eol
   text <- fmap unlines $ many $ do
     count' 0 removeIndent separatorChar
-    line <- some (letterChar <|> separatorChar <|> satisfy (exceptionSymbol [closeChar]) <|> punctuationChar)
+    line <- some (alphaNumChar <|> separatorChar <|> satisfy (exceptionSymbol [closeChar]) <|> punctuationChar)
     eol
     pure line
   count' 0 3 separatorChar
@@ -145,11 +136,45 @@ blockParser = do
   elements <- some blockEl <* (eof <|> void eol)
   return (Block elements)
 
+bulletParser :: Char -> Parser [TopLevel]
+bulletParser c = do
+  char c
+  separatorChar
+  fLine <- topLevelOptions
+  rest <- many $ do
+    count 4 separatorChar
+    topLevelOptions
+  let item = [fLine] <> rest
+  return item
+
+uListParser :: Parser TopLevel
+uListParser = try $ do
+-- char + indent that triggers start
+-- nested indent + toplevel parser
+-- any non char that is not indented sufficiently?
+  count' 0 3 separatorChar
+  charType <- char '+' <|> char '-' <|> char '*'
+  separatorChar
+  firstLine <- topLevelOptions
+  rest <- many $ do
+    count 4 separatorChar
+    topLevelOptions
+  let firstItem = [firstLine] <> rest
+  otherItems <- many $ bulletParser charType
+  let items = [firstItem] <> otherItems
+  return (UList items)
+
+listParser :: Parser TopLevel
+listParser = uListParser
+
 emptyParser :: Parser TopLevel
 emptyParser = do
   skipMany separatorChar
   eol
   return Empty
 
+topLevelOptions :: Parser TopLevel
+topLevelOptions = listParser <|> titleParser <|> hrLine <|> blockParser <|> emptyParser
+
 topLevel :: Parser Markdown
-topLevel = many (titleParser <|> hrLine <|> blockParser <|> emptyParser) <* eof
+topLevel = many topLevelOptions <* eof
