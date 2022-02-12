@@ -19,7 +19,7 @@ data El =  Br | Link El String | Image El String | Emphasis [El] | Strong [El]
   deriving (Show, Eq)
 
 data TopLevel = Title Int [El] | Block [El] | Hr | Empty | Blockquote [TopLevel]
-              | UList [[TopLevel]]| OList [[TopLevel]]
+              | UList Int [[TopLevel]]| OList Int [[TopLevel]]
   deriving (Show, Eq)
 
 type Markdown = [TopLevel]
@@ -136,36 +136,56 @@ blockParser = do
   elements <- some blockEl <* (eof <|> void eol)
   return (Block elements)
 
-bulletParser :: Char -> Parser [TopLevel]
-bulletParser c = do
+orderedSymbol :: Char -> Int -> Parser ()
+orderedSymbol c d = do
+  count (2 * (d - 1)) separatorChar
+  count' 0 3 separatorChar <?> "initial indent"
+  digitChar *> char c
+  void separatorChar
+
+bulletSymbol :: Char -> Int -> Parser ()
+bulletSymbol c d = do
+  count (2 * (d - 1)) separatorChar
+  count' 0 3 separatorChar <?> "initial indent"
   char c
-  separatorChar
-  fLine <- topLevelOptions
-  rest <- many $ do
-    count 4 separatorChar
-    topLevelOptions
-  let item = [fLine] <> rest
+  void separatorChar
+
+bulletItemParser :: Int -> Parser [TopLevel]
+bulletItemParser d = do
+  -- fLine <- listParser (d + 1) <|> nonListOptions
+  rest <- option [] $ some $
+      listParser (d + 1)
+      <|>
+      (do count (2 * d) separatorChar
+          nonListOptions)
+  let item = rest
   return item
 
-uListParser :: Parser TopLevel
-uListParser = try $ do
--- char + indent that triggers start
--- nested indent + toplevel parser
--- any non char that is not indented sufficiently?
-  count' 0 3 separatorChar
-  charType <- char '+' <|> char '-' <|> char '*'
-  separatorChar
-  firstLine <- topLevelOptions
-  rest <- many $ do
-    count 4 separatorChar
-    topLevelOptions
-  let firstItem = [firstLine] <> rest
-  otherItems <- many $ bulletParser charType
+oListParser :: Int -> Parser TopLevel
+oListParser depth = try $ do
+  count (2 * (depth-1)) separatorChar
+  count' 0 3 separatorChar <?> "initial indent"
+  digitChar
+  charType <- char '.' <|> char ')'
+  separatorChar <?> "separator after list"
+  firstItem <- bulletItemParser depth
+  otherItems <- option [] $ some ( orderedSymbol charType depth *> bulletItemParser depth)
   let items = [firstItem] <> otherItems
-  return (UList items)
+  return (OList depth items)
 
-listParser :: Parser TopLevel
-listParser = uListParser
+uListParser :: Int -> Parser TopLevel
+uListParser depth = try $ do
+  count (2 * (depth-1)) separatorChar
+  count' 0 3 separatorChar <?> "initial indent"
+  charType <- char '+' <|> char '-' <|> char '*' <?> "list symbol"
+  separatorChar <?> "separator after list"
+  firstItem <- bulletItemParser depth
+  otherItems <- option [] $ some ( bulletSymbol charType depth *> bulletItemParser depth)
+  let items = [firstItem] <> otherItems
+  return (UList depth items)
+
+listParser :: Int -> Parser TopLevel
+listParser d = uListParser d <|> oListParser d
 
 emptyParser :: Parser TopLevel
 emptyParser = do
@@ -173,8 +193,11 @@ emptyParser = do
   eol
   return Empty
 
-topLevelOptions :: Parser TopLevel
-topLevelOptions = listParser <|> titleParser <|> hrLine <|> blockParser <|> emptyParser
+nonListOptions :: Parser TopLevel
+nonListOptions = hrLine <|> titleParser <|> blockParser <|> emptyParser
+
+topLevelOptions :: Int -> Parser TopLevel
+topLevelOptions d = hrLine <|> listParser d <|> titleParser <|> blockParser <|> emptyParser
 
 topLevel :: Parser Markdown
-topLevel = many topLevelOptions <* eof
+topLevel = many (topLevelOptions 1) <* eof
