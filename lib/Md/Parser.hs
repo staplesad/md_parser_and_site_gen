@@ -15,7 +15,7 @@ import Text.Pretty.Simple
 type Parser = Parsec Void String
 
 data El =  Br | Link El String | Image El String | Emphasis [El] | Strong [El]
-        | Strikethrough [El] | Codespan String | Codeblock String | Raw String
+        | Strikethrough [El] | Codespan String | Codeblock String | Raw String String
   deriving (Show, Eq)
 
 data TopLevel = Title Int [El] | Block [El] | Hr | Empty | Blockquote [TopLevel]
@@ -45,12 +45,12 @@ myPuncChar = choice [ char '.', char ',', char '<', char '/', char '\'', char '"
 strictText :: Parser El
 strictText = label "strictText" $ do
   text <- some (letterChar <|> separatorChar <|> myPuncChar)
-  return (Raw text)
+  return (Raw "strict" text)
 
 normalText :: Parser El
 normalText = label "normalText" $ do
   text <- some (alphaNumChar <|> separatorChar <|> punctuationChar <|> symbolChar)
-  return (Raw text)
+  return (Raw "normal" text)
 
 withoutGapsText :: Parser El
 withoutGapsText = label "withoutGaps" $ try $ do
@@ -60,7 +60,7 @@ withoutGapsText = label "withoutGaps" $ try $ do
       seps <- optional (many separatorChar)
       t <- some $ alphaNumChar <|> myPuncChar
       pure $ fromMaybe "" seps <> t
-  return (Raw (char1 : fromMaybe "" rest))
+  return (Raw "w/ogaps" (char1 : fromMaybe "" rest))
 
 emphText :: Parser El
 emphText = try $ do
@@ -137,33 +137,31 @@ blockParser = do
   return (Block elements)
 
 orderedSymbol :: Char -> Int -> Parser ()
-orderedSymbol c d = do
-  count (2 * (d - 1)) separatorChar
+orderedSymbol c depth = do
+  count (2 * depth) separatorChar
   count' 0 3 separatorChar <?> "initial indent"
   digitChar *> char c
   void separatorChar
 
 bulletSymbol :: Char -> Int -> Parser ()
-bulletSymbol c d = do
-  count (2 * (d - 1)) separatorChar
+bulletSymbol c depth = do
+  count (2 * depth) separatorChar
   count' 0 3 separatorChar <?> "initial indent"
   char c
   void separatorChar
 
 bulletItemParser :: Int -> Parser [TopLevel]
-bulletItemParser d = do
-  -- fLine <- listParser (d + 1) <|> nonListOptions
+bulletItemParser depth = do
+  fLine <- listParser (depth + 1) <|> nonListOptions
   rest <- option [] $ some $
-      listParser (d + 1)
-      <|>
-      (do count (2 * d) separatorChar
-          nonListOptions)
-  let item = rest
+      listParser (depth + 1) <|> (do count (2 * (depth + 1)) separatorChar
+                                     nonListOptions)
+  let item = [fLine] <> rest
   return item
 
 oListParser :: Int -> Parser TopLevel
 oListParser depth = try $ do
-  count (2 * (depth-1)) separatorChar
+  count (2 * depth) separatorChar
   count' 0 3 separatorChar <?> "initial indent"
   digitChar
   charType <- char '.' <|> char ')'
@@ -175,7 +173,7 @@ oListParser depth = try $ do
 
 uListParser :: Int -> Parser TopLevel
 uListParser depth = try $ do
-  count (2 * (depth-1)) separatorChar
+  count (2 * depth) separatorChar
   count' 0 3 separatorChar <?> "initial indent"
   charType <- char '+' <|> char '-' <|> char '*' <?> "list symbol"
   separatorChar <?> "separator after list"
@@ -200,4 +198,4 @@ topLevelOptions :: Int -> Parser TopLevel
 topLevelOptions d = hrLine <|> listParser d <|> titleParser <|> blockParser <|> emptyParser
 
 topLevel :: Parser Markdown
-topLevel = many (topLevelOptions 1) <* eof
+topLevel = many (topLevelOptions 0) <* eof
