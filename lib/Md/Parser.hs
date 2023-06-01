@@ -14,188 +14,54 @@ import Text.Pretty.Simple
 
 type Parser = Parsec Void String
 
-data El =  Br | Link El String | Image El String | Emphasis [El] | Strong [El]
-        | Strikethrough [El] | Codespan String | Codeblock String | Raw String String
+type Document = [Block]
+
+data InlineElem = RawString String
+
+data Mchars = Line String | LineEnding
+  deriving (Show)
+
+instance Eq Mchars where
+  Line s1 == Line s2 = s1 == s2
+  LineEnding == LineEnding = True
+
+data Block = BList [Block] | OList [Block] | Title Int [Mchars] | Break | CodeBlock [Mchars] | Paragraph [Mchars] | BlankLine
   deriving (Show, Eq)
 
-data TopLevel = Title Int [El] | Block [El] | Hr | Empty | Blockquote [TopLevel]
-              | UList Int [[TopLevel]]| OList Int [[TopLevel]]
-  deriving (Show, Eq)
+myEOL = void (chunk "\r\n" <|> chunk "\n" <|> chunk "\r") <|> eof
 
-type Markdown = [TopLevel]
+lineEndParser :: Parser Mchars
+lineEndParser = LineEnding <$ myEOL
+-- fmap (\_ -> LineEnding) (chunk ....)
 
-
-titleParser :: Parser TopLevel
-titleParser = label "Title" $ try $ do
-  count' 0 3 separatorChar
-  octothorpes <- count' 1 6 (char '#')
-  let depth = length octothorpes
+lineParser :: Parser Mchars
+lineParser = do
   hspace
-  text <- some subsetBlockEl
-  many (char '#' <|> separatorChar)
-  eol
-  return (Title depth text)
+  a <- textFirstChar
+  b <- takeWhileP (Just "Bare String") (`notElem` ("\r\n" :: String))
+  lineEndParser
+  pure $ Line (a:b)
 
-myPuncChar :: Parser Char
-myPuncChar = choice [ char '.', char ',', char '<', char '/', char '\'', char '"'
-                    , char ':', char ';', char '=', char '(', char ')', char '{', char ']'
-                    , char ']', char '&', char '^', char '%', char '$', char '€', char '£'
-                    , char '@', char '?', char '\\']
+titleParser :: Parser Block
+titleParser = do
+  --pure (Title 0 [LineEnding])
 
-strictText :: Parser El
-strictText = label "strictText" $ do
-  text <- some (letterChar <|> separatorChar <|> myPuncChar)
-  return (Raw "strict" text)
+textFirstChar :: Parser Char
+textFirstChar = satisfy (`notElem` ("*-#`0123456789" :: String))
 
-normalText :: Parser El
-normalText = label "normalText" $ do
-  text <- some (alphaNumChar <|> separatorChar <|> punctuationChar <|> symbolChar)
-  return (Raw "normal" text)
+paragraphParser :: Parser Block
+paragraphParser = Paragraph <$> some lineParser
 
-withoutGapsText :: Parser El
-withoutGapsText = label "withoutGaps" $ try $ do
-  char1 <- alphaNumChar <|> myPuncChar
-  rest <- optional $ do
-    fmap mconcat $ many $ do
-      seps <- optional (many separatorChar)
-      t <- some $ alphaNumChar <|> myPuncChar
-      pure $ fromMaybe "" seps <> t
-  return (Raw "w/ogaps" (char1 : fromMaybe "" rest))
+--(<$>) :: Functor f => (a -> b) -> f a -> f b
+--(<$) :: Functor f => b -> f a -> f b
 
-emphText :: Parser El
-emphText = try $ do
-  charF <- char '*' <|> char '_'
-  text <- some $ withoutGapsText <|> subsetBlockEl
-  _ <-  char charF
-  return (Emphasis text)
+blankParser :: Parser Block
+blankParser = BlankLine <$ (hspace >> lineEndParser)
+-- hspace uses takeWhileP and consumes tokens so this will not backtrack.
+-- blankParser should be the last topLevel block tried for this reason
 
-strongText :: Parser El
-strongText = label "strong" $ try $ do
-  c <- try $ do
-    c <- char '*' <|> char '_'
-    char c
-  text <- some $ withoutGapsText <|> subsetBlockEl
-  _ <- count 2 (char c)
-  return (Strong text)
+blockOption :: Parser Block
+blockOption = titleParser <|> blankParser
 
-
-hrLine :: Parser TopLevel
-hrLine = label "hr" $ try $ do
-  count' 0 3 separatorChar
-  c <- char '*' <|> char '-' <|> char '_'
-  count 2 (char c >> optional separatorChar)
-  optional (many (char c <|> separatorChar))
-  _ <- eol
-  return Hr <?> "Hr"
-
-indentedCodeBlock :: Parser El
-indentedCodeBlock = label "indented" $ try $ do
-  eol *> many separatorChar *> eol
-  text <- fmap unlines $ some $ do
-    count 4 separatorChar
-    line <- some (alphaNumChar <|> separatorChar <|> punctuationChar <|> symbolChar)
-    eol
-    pure line
-  return (Codeblock text)
-
-exceptionPunctuation :: [Char] -> Char -> Bool
-exceptionPunctuation c a = notElem a c && isPunctuation a
-
-exceptionSymbol :: [Char] -> Char -> Bool
-exceptionSymbol c a = notElem a c && isSymbol a
-
-fencedCodeBlock :: Parser El
-fencedCodeBlock = label "fenced" $ try $ do
-  indents <- count' 0 3 separatorChar
-  let removeIndent = length indents
-  openChars :: [Char] <- count 3 (char '`' <|> char '~')
-  let closeChar = head openChars
-  extraChars <- many $ char closeChar
-  let minClose = length (openChars ++ extraChars)
-  _ <- eol
-  text <- fmap unlines $ many $ do
-    count' 0 removeIndent separatorChar
-    line <- some (alphaNumChar <|> separatorChar <|> satisfy (exceptionSymbol [closeChar]) <|> punctuationChar)
-    eol
-    pure line
-  count' 0 3 separatorChar
-  count minClose (char closeChar) *> many (char closeChar) *> eol
-  return (Codeblock text)
-
-subsetBlockEl :: Parser El
-subsetBlockEl = strictText <|> strongText <|> emphText
-
-codeBlockEl :: Parser El
-codeBlockEl = indentedCodeBlock <|> fencedCodeBlock
-
-blockEl :: Parser El
-blockEl = codeBlockEl <|> subsetBlockEl <|> normalText
-
-blockParser :: Parser TopLevel
-blockParser = do
-  elements <- some blockEl <* (eof <|> void eol)
-  return (Block elements)
-
-orderedSymbol :: Char -> Int -> Parser ()
-orderedSymbol c depth = do
-  count (2 * depth) separatorChar
-  count' 0 3 separatorChar <?> "initial indent"
-  digitChar *> char c
-  void separatorChar
-
-bulletSymbol :: Char -> Int -> Parser ()
-bulletSymbol c depth = do
-  count (2 * depth) separatorChar
-  count' 0 3 separatorChar <?> "initial indent"
-  char c
-  void separatorChar
-
-bulletItemParser :: Int -> Parser [TopLevel]
-bulletItemParser depth = do
-  fLine <- listParser (depth + 1) <|> nonListOptions
-  rest <- option [] $ some $
-      listParser (depth + 1) <|> (do count (2 * (depth + 1)) separatorChar
-                                     nonListOptions)
-  let item = [fLine] <> rest
-  return item
-
-oListParser :: Int -> Parser TopLevel
-oListParser depth = try $ do
-  count (2 * depth) separatorChar
-  count' 0 3 separatorChar <?> "initial indent"
-  digitChar
-  charType <- char '.' <|> char ')'
-  separatorChar <?> "separator after list"
-  firstItem <- bulletItemParser depth
-  otherItems <- option [] $ some ( orderedSymbol charType depth *> bulletItemParser depth)
-  let items = [firstItem] <> otherItems
-  return (OList depth items)
-
-uListParser :: Int -> Parser TopLevel
-uListParser depth = try $ do
-  count (2 * depth) separatorChar
-  count' 0 3 separatorChar <?> "initial indent"
-  charType <- char '+' <|> char '-' <|> char '*' <?> "list symbol"
-  separatorChar <?> "separator after list"
-  firstItem <- bulletItemParser depth
-  otherItems <- option [] $ some ( bulletSymbol charType depth *> bulletItemParser depth)
-  let items = [firstItem] <> otherItems
-  return (UList depth items)
-
-listParser :: Int -> Parser TopLevel
-listParser d = uListParser d <|> oListParser d
-
-emptyParser :: Parser TopLevel
-emptyParser = do
-  skipMany separatorChar
-  eol
-  return Empty
-
-nonListOptions :: Parser TopLevel
-nonListOptions = hrLine <|> titleParser <|> blockParser <|> emptyParser
-
-topLevelOptions :: Int -> Parser TopLevel
-topLevelOptions d = hrLine <|> listParser d <|> titleParser <|> blockParser <|> emptyParser
-
-topLevel :: Parser Markdown
-topLevel = many (topLevelOptions 0) <* eof
+document :: Parser Document
+document = many blockOption <* eof
